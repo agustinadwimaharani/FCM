@@ -1,0 +1,164 @@
+function [U, V, J_history, iteration_data] = fcm_detailed(X, c, m, max_iter, epsilon)
+% Fuzzy C-Means dengan output detail setiap iterasi
+% Input: X (data), c (jumlah cluster), m (fuzziness), max_iter, epsilon
+% Output: U (matriks partisi), V (centroid), J_history, iteration_data
+
+    if nargin < 3, m = 2; end
+    if nargin < 4, max_iter = 100; end
+    if nargin < 5, epsilon = 1e-5; end
+
+    [n, d] = size(X);
+
+    fprintf('\nFuzzy C-Means - %d Cluster\n', c);
+    fprintf('Parameter: n=%d, d=%d, m=%.1f, max_iter=%d, epsilon=%.0e\n', n, d, m, max_iter, epsilon);
+
+    % Inisialisasi matriks partisi
+    fprintf('\nInisialisasi matriks partisi U0\n');
+    U = rand(c, n);
+    U = U ./ sum(U, 1);
+
+    fprintf('U0 (5 data pertama):\n');
+    fprintf('%-10s', 'Cluster');
+    for j = 1:min(738, n)
+        fprintf('%-12s', sprintf('Data%d', j));
+    end
+    fprintf('\n');
+    for i = 1:c
+        fprintf('%-10d', i);
+        for j = 1:min(738, n)
+            fprintf('%-12.6f', U(i, j));
+        end
+        fprintf('\n');
+    end
+
+    J_history = zeros(max_iter, 1);
+    iteration_data = cell(max_iter, 1);
+
+    for iter = 1:max_iter
+        fprintf('\n--- Iterasi %d ---\n', iter);
+
+        % Pangkatkan matriks partisi
+        Um = U .^ m;
+
+        if iter == 1
+            fprintf('U^m (5 data pertama):\n');
+            fprintf('%-10s', 'Cluster');
+            for j = 1:min(738, n)
+                fprintf('%-12s', sprintf('Data%d', j));
+            end
+            fprintf('\n');
+            for i = 1:c
+                fprintf('%-10d', i);
+                for j = 1:min(738, n)
+                    fprintf('%-12.6f', Um(i, j));
+                end
+                fprintf('\n');
+            end
+        end
+
+        % Hitung centroid
+        V = (Um * X) ./ sum(Um, 2);
+
+        fprintf('\nCentroid:\n');
+        fprintf('%-10s %-12s %-12s %-12s %-12s\n', 'Cluster', 'JK', 'Usia', 'Berat', 'Tinggi');
+        for i = 1:c
+            fprintf('%-10d %-12.6f %-12.6f %-12.6f %-12.6f\n', ...
+                    i, V(i, 1), V(i, 2), V(i, 3), V(i, 4));
+        end
+
+        % Hitung fungsi objektif
+        J = 0;
+        for i = 1:c
+            for j = 1:n
+                dist = norm(X(j, :) - V(i, :));
+                J = J + Um(i, j) * dist^2;
+            end
+        end
+        J_history(iter) = J;
+
+        fprintf('\nFungsi Objektif (J): %.6f\n', J);
+
+
+        % Update matriks partisi
+        U_old = U;
+        D = zeros(c, n);
+        for i = 1:c
+            for j = 1:n
+                D(i, j) = norm(X(j, :) - V(i, :));
+            end
+        end
+
+        D(D == 0) = eps;
+
+        for i = 1:c
+            for j = 1:n
+                sum_term = 0;
+                for k = 1:c
+                    sum_term = sum_term + (D(i, j) / D(k, j))^(2/(m-1));
+                end
+                U(i, j) = 1 / sum_term;
+            end
+        end
+
+        % Hitung perubahan
+        delta_U = norm(U - U_old);
+        fprintf('Delta U: %.6e\n', delta_U);
+
+        % Simpan data iterasi
+        iteration_data{iter}.iter = iter;
+        iteration_data{iter}.U = U;
+        iteration_data{iter}.Um = Um;
+        iteration_data{iter}.V = V;
+        iteration_data{iter}.J = J;
+        iteration_data{iter}.delta_U = delta_U;
+
+        % Cek konvergensi
+        if delta_U < epsilon
+            fprintf('\nKonvergensi tercapai pada iterasi %d (delta_U < epsilon)\n', iter);
+            J_history = J_history(1:iter);
+            iteration_data = iteration_data(1:iter);
+            break;
+        end
+
+        if iter == max_iter
+            fprintf('\nMaksimum iterasi tercapai (%d)\n', max_iter);
+        end
+    end
+
+    % Hasil akhir
+    fprintf('\nHasil Akhir:\n');
+    fprintf('Centroid final:\n');
+    fprintf('%-10s %-12s %-12s %-12s %-12s\n', 'Cluster', 'JK', 'Usia', 'Berat', 'Tinggi');
+    for i = 1:c
+        fprintf('%-10d %-12.6f %-12.6f %-12.6f %-12.6f\n', ...
+                i, V(i, 1), V(i, 2), V(i, 3), V(i, 4));
+    end
+
+    fprintf('\nFungsi Objektif final: %.6f\n', J_history(end));
+    fprintf('Total iterasi: %d\n', length(J_history));
+
+    % Hasil clustering
+    [~, cluster_labels] = max(U, [], 1);
+    fprintf('\nHasil Clustering (10 data pertama):\n');
+    fprintf('%-8s', 'Data');
+    for i = 1:c
+        fprintf('%-15s', sprintf('Member C%d', i));
+    end
+    fprintf('%-10s\n', 'Cluster');
+    for j = 1:min(10, n)
+        fprintf('%-8d', j);
+        for i = 1:c
+            fprintf('%-15.6f', U(i, j));
+        end
+        fprintf('%-10d\n', cluster_labels(j));
+    end
+
+    % Distribusi
+    fprintf('\nDistribusi Cluster:\n');
+    for i = 1:c
+        count = sum(cluster_labels == i);
+        percentage = (count / n) * 100;
+        fprintf('  Cluster %d: %d data (%.2f%%)\n', i, count, percentage);
+    end
+
+end

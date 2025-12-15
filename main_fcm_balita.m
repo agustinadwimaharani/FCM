@@ -1,0 +1,338 @@
+% Clustering Status Gizi Balita - Fuzzy C-Means dengan PCI
+% Clustering balita berdasarkan JK, Usia, Berat, Tinggi
+% Evaluasi 3 skenario: 2, 3, dan 4 cluster
+
+clear; clc; close all;
+
+fprintf('\nCLUSTERING STATUS GIZI BALITA - FUZZY C-MEANS\n\n');
+
+%% Load Data
+fprintf('Load Dataset\n');
+data_path = 'DataBalita.xlsx';
+fprintf('Membaca file: %s\n', data_path);
+
+try
+    data = readtable(data_path, 'Sheet', 1);
+
+    if width(data) >= 6
+        data.Properties.VariableNames(1:6) = {'No', 'Nama', 'JK', 'Usia_Bulan', 'Berat', 'Tinggi'};
+    end
+
+    data = rmmissing(data);
+
+    fprintf('Data berhasil dimuat: %d balita\n', height(data));
+    fprintf('Kolom: JK, Usia_Bulan, Berat, Tinggi\n\n');
+
+catch ME
+    fprintf('ERROR: Gagal membaca file\n');
+    fprintf('%s\n', ME.message);
+    return;
+end
+
+%% Preprocessing
+[X_normalized, X_encoded, params] = preprocess_data(data);
+
+%% Fuzzy C-Means untuk 3 Skenario
+cluster_scenarios = [2, 3, 4];
+results = struct();
+
+for idx = 1:length(cluster_scenarios)
+    c = cluster_scenarios(idx);
+
+    fprintf('\n\n--- SKENARIO %d: %d CLUSTER ---\n', idx, c);
+
+    [U, V, J_history, iteration_data] = fcm_detailed(X_normalized, c, 2, 100, 1e-5);
+
+    results(idx).c = c;
+    results(idx).U = U;
+    results(idx).V = V;
+    results(idx).J_history = J_history;
+    results(idx).iteration_data = iteration_data;
+    [~, cluster_labels] = max(U, [], 1);
+    results(idx).cluster_labels = cluster_labels';
+    results(idx).pci = calculate_pci(U);
+    results(idx).si = calculate_silhouette_index(X_normalized, U);
+
+end
+
+%% Perbandingan PCI
+fprintf('\n\nEVALUASI PERBANDINGAN PCI\n');
+fprintf('%-15s %-15s %-20s\n', 'Jumlah Cluster', 'PCI', 'Keterangan');
+fprintf('%s\n', repmat('-', 1, 55));
+
+pci_values = [results.pci];
+for idx = 1:length(cluster_scenarios)
+    fprintf('%-15d %-15.6f', results(idx).c, results(idx).pci);
+    if results(idx).pci == max(pci_values)
+        fprintf(' %-20s\n', '<-- TERBAIK');
+    else
+        fprintf('\n');
+    end
+end
+
+[max_pci, best_idx] = max(pci_values);
+fprintf('\nKESIMPULAN:\n');
+fprintf('Jumlah cluster optimal: %d cluster\n', results(best_idx).c);
+fprintf('Nilai PCI tertinggi: %.6f\n\n', max_pci);
+
+%% Perbandingan SI
+fprintf('\n\nEVALUASI PERBANDINGAN SILHOUETTE INDEX (SI)\n');
+fprintf('%-15s %-15s %-20s\n', 'Jumlah Cluster', 'SI', 'Keterangan');
+fprintf('%s\n', repmat('-', 1, 55));
+
+si_values = [results.si];
+for idx = 1:length(cluster_scenarios)
+    fprintf('%-15d %-15.6f', results(idx).c, results(idx).si);
+    if results(idx).si == max(si_values)
+        fprintf(' %-20s\n', '<-- TERBAIK');
+    else
+        fprintf('\n');
+    end
+end
+
+
+%% Visualisasi
+fprintf('Membuat Visualisasi\n');
+
+for idx = 1:length(cluster_scenarios)
+    V_denorm = zeros(size(results(idx).V));
+    for i = 1:4
+        V_denorm(:, i) = results(idx).V(:, i) * params.range(i) + params.min_vals(i);
+    end
+    results(idx).V_denorm = V_denorm;
+end
+
+for idx = 1:length(cluster_scenarios)
+    c = results(idx).c;
+    cluster_labels = results(idx).cluster_labels;
+    V_denorm = results(idx).V_denorm;
+
+    figure('Name', sprintf('%d Cluster - PCI %.4f', c, results(idx).pci), ...
+           'Position', [100 + (idx-1)*50, 100 + (idx-1)*50, 1200, 400]);
+
+    % Plot 1: Berat vs Tinggi
+    subplot(1, 3, 1);
+    colors = lines(c);
+    for i = 1:c
+        idx_cluster = find(cluster_labels == i);
+        scatter(X_encoded(idx_cluster, 3), X_encoded(idx_cluster, 4), 50, ...
+                colors(i, :), 'filled', 'MarkerEdgeColor', 'k', 'LineWidth', 0.5);
+        hold on;
+    end
+    scatter(V_denorm(:, 3), V_denorm(:, 4), 200, colors, 'p', ...
+            'filled', 'MarkerEdgeColor', 'k', 'LineWidth', 2);
+    xlabel('Berat Badan (kg)', 'FontWeight', 'bold');
+    ylabel('Tinggi Badan (cm)', 'FontWeight', 'bold');
+    title(sprintf('Berat vs Tinggi (%d Cluster)', c), 'FontWeight', 'bold');
+    legend_entries = cell(c*2, 1);
+    for i = 1:c
+        legend_entries{i} = sprintf('Cluster %d', i);
+        legend_entries{c+i} = sprintf('Centroid %d', i);
+    end
+    legend(legend_entries, 'Location', 'best');
+    grid on;
+    hold off;
+
+    % Plot 2: 3D
+    subplot(1, 3, 2);
+    for i = 1:c
+        idx_cluster = find(cluster_labels == i);
+        scatter3(X_encoded(idx_cluster, 2), X_encoded(idx_cluster, 3), ...
+                 X_encoded(idx_cluster, 4), 50, colors(i, :), 'filled', ...
+                 'MarkerEdgeColor', 'k', 'LineWidth', 0.5);
+        hold on;
+    end
+    scatter3(V_denorm(:, 2), V_denorm(:, 3), V_denorm(:, 4), 200, ...
+             colors, 'p', 'filled', 'MarkerEdgeColor', 'k', 'LineWidth', 2);
+    xlabel('Usia (Bulan)', 'FontWeight', 'bold');
+    ylabel('Berat (kg)', 'FontWeight', 'bold');
+    zlabel('Tinggi (cm)', 'FontWeight', 'bold');
+    title(sprintf('3D: Usia-Berat-Tinggi (%d Cluster)', c), 'FontWeight', 'bold');
+    legend(legend_entries, 'Location', 'best');
+    grid on;
+    view(45, 30);
+    hold off;
+
+    % Plot 3: Konvergensi
+    subplot(1, 3, 3);
+    plot(1:length(results(idx).J_history), results(idx).J_history, ...
+         'o-', 'LineWidth', 2, 'MarkerSize', 6, 'MarkerFaceColor', 'b');
+    xlabel('Iterasi', 'FontWeight', 'bold');
+    ylabel('Fungsi Objektif (J)', 'FontWeight', 'bold');
+    title(sprintf('Konvergensi FCM (%d Cluster)', c), 'FontWeight', 'bold');
+    grid on;
+
+    sgtitle(sprintf('Hasil Clustering %d Cluster (PCI = %.4f)', c, results(idx).pci), ...
+            'FontWeight', 'bold', 'FontSize', 14);
+end
+
+% Plot Perbandingan PCI
+figure('Name', 'Perbandingan PCI', 'Position', [200, 200, 800, 500]);
+bar(cluster_scenarios, pci_values, 'FaceColor', [0.2 0.6 0.8], 'EdgeColor', 'k', 'LineWidth', 1.5);
+hold on;
+plot(cluster_scenarios, pci_values, 'ro-', 'LineWidth', 2, 'MarkerSize', 10, 'MarkerFaceColor', 'r');
+xlabel('Jumlah Cluster', 'FontWeight', 'bold', 'FontSize', 12);
+ylabel('Partition Coefficient Index (PCI)', 'FontWeight', 'bold', 'FontSize', 12);
+title('Perbandingan PCI untuk Berbagai Jumlah Cluster', 'FontWeight', 'bold', 'FontSize', 14);
+xticks(cluster_scenarios);
+grid on;
+ylim([min(pci_values)*0.95, max(pci_values)*1.05]);
+for i = 1:length(cluster_scenarios)
+    text(cluster_scenarios(i), pci_values(i) + 0.005, sprintf('%.4f', pci_values(i)), ...
+         'HorizontalAlignment', 'center', 'FontWeight', 'bold', 'FontSize', 11);
+end
+hold off;
+
+fprintf('Visualisasi selesai\n\n');
+
+%% Simpan Hasil
+fprintf('Menyimpan Hasil ke Folder Output\n');
+
+output_dir = 'output';
+if ~exist(output_dir, 'dir')
+    mkdir(output_dir);
+end
+
+% Simpan figure
+fig_list = findall(0, 'Type', 'figure');
+for i = 1:length(fig_list)
+    fig_name = get(fig_list(i), 'Name');
+    if isempty(fig_name)
+        fig_name = sprintf('Figure_%d', i);
+    end
+    fig_name = strrep(fig_name, ' ', '_');
+    fig_name = strrep(fig_name, ':', '');
+    fig_name = strrep(fig_name, '-', '');
+
+    saveas(fig_list(i), fullfile(output_dir, [fig_name, '.png']));
+    fprintf('  Saved: %s.png\n', fig_name);
+end
+
+% Simpan hasil clustering
+for idx = 1:length(cluster_scenarios)
+    c = results(idx).c;
+
+    output_table = table();
+    output_table.No = (1:height(data))';
+    output_table.Nama = data.Nama;
+    output_table.JK = data.JK;
+    output_table.Usia_Bulan = data.Usia_Bulan;
+    output_table.Berat = data.Berat;
+    output_table.Tinggi = data.Tinggi;
+
+    for i = 1:c
+        output_table.(sprintf('Membership_C%d', i)) = results(idx).U(i, :)';
+    end
+
+    output_table.Cluster = results(idx).cluster_labels;
+
+    filename = sprintf('hasil_clustering_%d_cluster.xlsx', c);
+    writetable(output_table, fullfile(output_dir, filename));
+    fprintf('  Saved: %s\n', filename);
+end
+
+% Simpan PCI
+pci_table = table(cluster_scenarios', pci_values', 'VariableNames', {'Jumlah_Cluster', 'PCI'});
+writetable(pci_table, fullfile(output_dir, 'perbandingan_pci.xlsx'));
+fprintf('  Saved: perbandingan_pci.xlsx\n');
+
+
+
+% Plot Perbandingan SI
+figure('Name', 'Perbandingan SI', 'Position', [250, 250, 800, 500]);
+bar(cluster_scenarios, si_values, 'FaceColor', [0.1 0.7 0.4], ...
+    'EdgeColor', 'k', 'LineWidth', 1.5);
+hold on;
+plot(cluster_scenarios, si_values, 'ko-', 'LineWidth', 2, ...
+    'MarkerSize', 10, 'MarkerFaceColor', 'y');
+xlabel('Jumlah Cluster', 'FontWeight', 'bold', 'FontSize', 12);
+ylabel('Silhouette Index (SI)', 'FontWeight', 'bold', 'FontSize', 12);
+title('Perbandingan Silhouette Index (SI)', 'FontWeight', 'bold', 'FontSize', 14);
+xticks(cluster_scenarios);
+grid on;
+ylim([min(si_values)*0.95, max(si_values)*1.05]);
+
+for i = 1:length(cluster_scenarios)
+    text(cluster_scenarios(i), si_values(i) + 0.005, ...
+         sprintf('%.4f', si_values(i)), ...
+         'HorizontalAlignment', 'center', 'FontWeight', 'bold', 'FontSize', 11);
+end
+hold off;
+
+
+% Simpan SI
+si_table = table(cluster_scenarios', si_values', ...
+                 'VariableNames', {'Jumlah_Cluster', 'Silhouette_Index'});
+writetable(si_table, fullfile(output_dir, 'perbandingan_si.xlsx'));
+fprintf('  Saved: perbandingan_si.xlsx\n');
+
+
+% Simpan workspace
+save(fullfile(output_dir, 'workspace_fcm.mat'));
+fprintf('  Saved: workspace_fcm.mat\n');
+
+
+%% Menampilkan & Menyimpan Matriks Partisi + Pemangkatan U
+
+% output_dir = 'output';
+% if ~exist(output_dir, 'dir')
+%     mkdir(output_dir);
+% end
+
+% m = 2; % fuzziness, sesuaikan dengan yang dipakai di fcm_detailed
+
+% for idx_skenario = 1:length(results)
+%     c = results(idx_skenario).c;  % jumlah cluster
+
+    % Ambil Matriks Partisi iterasi terakhir
+%     U_last = results(idx_skenario).iteration_data{end}.U;
+
+    % Normalisasi U agar jumlah per data = 1
+%    U_last = U_last ./ sum(U_last,1);
+
+    % Pemangkatan U
+%    U_pow = U_last.^m;
+
+    % Buat tabel untuk U
+%    cluster_names = arrayfun(@(x) sprintf('C%d', x), 1:c, 'UniformOutput', false);
+%    T_U = array2table(U_last', 'VariableNames', cluster_names);
+
+    % Buat tabel untuk U^m
+%    T_U_pow = array2table(U_pow', 'VariableNames', cluster_names);
+
+    % Tampilkan Matriks Partisi
+%    fprintf('\n=== Matriks Partisi - %d Cluster ===\n', c);
+%    disp(T_U);
+
+    % Tampilkan Matriks Partisi pangkat m
+%    fprintf('\n=== Pemangkatan Nilai Matriks Partisi (U^%.1f) - %d Cluster ===\n', m, c);
+%   disp(T_U_pow);
+
+    % Simpan ke Excel
+%    filename_U = fullfile(output_dir, sprintf('Matriks_Partisi_%dCluster.xlsx', c));
+%    writetable(T_U, filename_U);
+
+%    filename_U_pow = fullfile(output_dir, sprintf('Matriks_Partisi_Pangkat_%dCluster.xlsx', c));
+%   writetable(T_U_pow, filename_U_pow);
+
+    fprintf('Matriks Partisi dan U^%.1f untuk %d cluster tersimpan di folder: %s\n', m, c, output_dir);
+%end
+
+
+
+
+fprintf('\nSELESAI! Semua hasil disimpan di folder: %s\n\n', output_dir);
+
+
+
+%% Ringkasan
+fprintf('RINGKASAN HASIL\n');
+fprintf('Dataset: %s (%d balita)\n', data_path, height(data));
+fprintf('Fitur: JK, Usia, Berat, Tinggi\n');
+fprintf('Metode: Fuzzy C-Means (m=2, epsilon=1e-5)\n\n');
+fprintf('Skenario yang diuji:\n');
+for idx = 1:length(cluster_scenarios)
+    fprintf('  %d cluster - PCI: %.6f - Iterasi: %d\n', ...
+            results(idx).c, results(idx).pci, length(results(idx).J_history));
+end
+fprintf('\nKLUSTER OPTIMAL: %d cluster (PCI = %.6f)\n', results(best_idx).c, max_pci);

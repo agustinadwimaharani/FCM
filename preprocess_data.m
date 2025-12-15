@@ -1,0 +1,64 @@
+function [X_normalized, X_encoded, params] = preprocess_data(data)
+% Preprocessing data balita untuk FCM
+% Input: table dengan kolom JK, Usia_Bulan, Berat, Tinggi
+% Output: X_normalized, X_encoded, params
+
+    fprintf('\nPreprocessing Data\n');
+
+    % Encoding jenis kelamin (L=1, P=0)
+    JK_encoded = zeros(height(data), 1);
+    for i = 1:height(data)
+        if strcmp(data.JK{i}, 'L')
+            JK_encoded(i) = 1;
+        else
+            JK_encoded(i) = 0;
+        end
+    end
+
+    X_encoded = [JK_encoded, data.Usia_Bulan, data.Berat, data.Tinggi];
+
+    fprintf('Encoding: L=%d balita, P=%d balita\n', sum(JK_encoded == 1), sum(JK_encoded == 0));
+
+    % Sample data encoded
+    fprintf('\nSample data:\n');
+    fprintf('%-5s %-5s %-8s %-8s %-8s\n', 'No', 'JK', 'Usia', 'Berat', 'Tinggi');
+    for i = 1:min(5, size(X_encoded, 1))
+        fprintf('%-5d %-5d %-8.1f %-8.1f %-8.1f\n', ...
+                i, X_encoded(i,1), X_encoded(i,2), X_encoded(i,3), X_encoded(i,4));
+    end
+
+    % Min-max normalization
+    params.min_vals = min(X_encoded);
+    params.max_vals = max(X_encoded);
+    params.range = params.max_vals - params.min_vals;
+
+    fprintf('\nParameter normalisasi:\n');
+    fprintf('%-10s %-10s %-10s\n', 'Fitur', 'Min', 'Max');
+    fitur_names = {'JK', 'Usia', 'Berat', 'Tinggi'};
+    for i = 1:4
+        fprintf('%-10s %-10.2f %-10.2f\n', fitur_names{i}, params.min_vals(i), params.max_vals(i));
+    end
+
+    X_normalized = zeros(size(X_encoded));
+    for i = 1:4
+        if params.range(i) > 0
+            X_normalized(:, i) = (X_encoded(:, i) - params.min_vals(i)) / params.range(i);
+        else
+            X_normalized(:, i) = 0;
+        end
+    end
+
+    fprintf('\nNormalisasi selesai [0, 1]\n');
+
+
+    %   TAMPILKAN DATA SETELAH NORMALISASI
+    fprintf('\nData setelah dinormalisasi:\n');
+    fprintf('%-5s %-8s %-12s %-12s %-12s\n', 'No', 'JK_norm', 'Usia_norm', 'Berat_norm', 'Tinggi_norm');
+
+    for i = 1:min(5, size(X_normalized, 1))
+        fprintf('%-5d %-8.3f %-12.3f %-12.3f %-12.3f\n', ...
+                i, X_normalized(i,1), X_normalized(i,2), ...
+                X_normalized(i,3), X_normalized(i,4));
+    end
+
+end
