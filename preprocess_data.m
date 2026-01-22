@@ -22,7 +22,7 @@ function [X_normalized, X_encoded, params] = preprocess_data(data)
     % Sample data encoded
     fprintf('\nSample data:\n');
     fprintf('%-5s %-5s %-8s %-8s %-8s\n', 'No', 'JK', 'Usia', 'Berat', 'Tinggi');
-    for i = 1:min(5, size(X_encoded, 1))
+    for i = 1:min(10, size(X_encoded, 1))
         fprintf('%-5d %-5d %-8.1f %-8.1f %-8.1f\n', ...
                 i, X_encoded(i,1), X_encoded(i,2), X_encoded(i,3), X_encoded(i,4));
     end
@@ -55,10 +55,26 @@ function [X_normalized, X_encoded, params] = preprocess_data(data)
     fprintf('\nData setelah dinormalisasi:\n');
     fprintf('%-5s %-8s %-12s %-12s %-12s\n', 'No', 'JK_norm', 'Usia_norm', 'Berat_norm', 'Tinggi_norm');
 
-    for i = 1:min(5, size(X_normalized, 1))
+    for i = 1:min(10, size(X_normalized, 1))
         fprintf('%-5d %-8.3f %-12.3f %-12.3f %-12.3f\n', ...
                 i, X_normalized(i,1), X_normalized(i,2), ...
                 X_normalized(i,3), X_normalized(i,4));
     end
+
+    % Konversi ke tabel
+    T_normalized = array2table(X_normalized, ...
+        'VariableNames', {'JK_norm','Usia_norm','Berat_norm','Tinggi_norm'});
+
+    % Folder output
+    output_dir = 'output';
+    if ~exist(output_dir,'dir')
+        mkdir(output_dir);
+    end
+    
+    % Simpan ke Excel
+    filename = fullfile(output_dir, 'data_normalisasi.xlsx');
+    writetable(T_normalized, filename);
+    
+    fprintf('Data normalisasi berhasil disimpan: %s\n', filename);
 
 end

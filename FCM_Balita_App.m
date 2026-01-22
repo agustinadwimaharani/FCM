@@ -1,0 +1,171 @@
+classdef FCM_Balita_App < matlab.apps.AppBase
+
+    properties (Access = public)
+        UIFigure      matlab.ui.Figure
+        DataTable     matlab.ui.control.Table
+        LoadButton    matlab.ui.control.Button
+        ProcessButton matlab.ui.control.Button
+        UIAxes_PCI    matlab.ui.control.UIAxes
+        UIAxes_SI     matlab.ui.control.UIAxes
+        LabelJudul    matlab.ui.control.Label
+        
+        RawData       table
+        CleanData     table
+        ClusterLabels 
+        Btn2, Btn3, Btn4
+        FullResults   struct % Untuk menyimpan detail hasil FCM
+    end
+
+    methods (Access = private)
+
+        function LoadButtonPushed(app, event)
+            [file, path] = uigetfile({'*.xlsx;*.csv', 'File Data (*.xlsx, *.csv)'});
+            if isequal(file, 0), return; end
+            
+            opts = detectImportOptions(fullfile(path, file));
+            opts.VariableNamingRule = 'preserve';
+            data = readtable(fullfile(path, file), opts);
+            
+            if width(data) >= 6
+                data.Properties.VariableNames(1:6) = {'No','Nama','JK','Usia_Bulan','Berat','Tinggi'};
+            end
+            
+            app.RawData = data;
+            app.DataTable.Data = data;
+            app.ClusterLabels = [];
+        end
+
+        function ProcessButtonPushed(app, event)
+            if isempty(app.RawData)
+                uialert(app.UIFigure, 'Input file excel terlebih dahulu!', 'Peringatan');
+                return;
+            end
+
+            % 1. Cleaning
+            app.CleanData = rmmissing(app.RawData); 
+            app.CleanData.No = (1:height(app.CleanData))'; 
+            app.DataTable.Data = app.CleanData; 
+
+            % 2. Preprocessing
+            [X_norm, ~, ~] = preprocess_data(app.CleanData);
+            
+            scenarios = [2, 3, 4];
+            pci_vals = zeros(1,3); si_vals = zeros(1,3);
+            labels_store = zeros(height(app.CleanData), 3);
+            app.FullResults = struct(); % Reset results
+
+            % 3. Clustering & simpan detail ke struct
+            for i = 1:3
+                c = scenarios(i);
+                [U, V, J_history, iteration_data] = fcm_detailed(X_norm, c, 2, 100, 1e-5);
+                
+                pci_vals(i) = calculate_pci(U);
+                si_vals(i) = calculate_silhouette_index(X_norm, U);
+                [~, L] = max(U);
+                labels_store(:, i) = L';
+
+                % Simpan untuk keperluan export excel
+                app.FullResults(i).c = c;
+                app.FullResults(i).U = U;
+                app.FullResults(i).iteration_data = iteration_data;
+                app.FullResults(i).labels = L';
+            end
+
+            app.ClusterLabels = labels_store;
+            
+            % 4. Plotting
+            plot(app.UIAxes_PCI, scenarios, pci_vals, '-bo', 'MarkerFaceColor', 'b');
+            app.UIAxes_PCI.XTick = scenarios; grid(app.UIAxes_PCI, 'on');
+            plot(app.UIAxes_SI, scenarios, si_vals, '-ro', 'MarkerFaceColor', 'r');
+            app.UIAxes_SI.XTick = scenarios; grid(app.UIAxes_SI, 'on');
+
+            % 5. LOGIKA SAVE EXCEL (Copy dari script Anda)
+            app.saveAllResultsToExcel();
+
+            uialert(app.UIFigure, 'Proses Fuzzy C-Means Selesai!".', 'Berhasil');
+        end
+
+        function saveAllResultsToExcel(app)
+            output_dir = 'output';
+            if ~exist(output_dir, 'dir'), mkdir(output_dir); end
+            m = 2;
+
+            for idx = 1:length(app.FullResults)
+                c = app.FullResults(idx).c;
+                U_last = app.FullResults(idx).iteration_data{end}.U;
+                U_last = U_last ./ sum(U_last,1);
+                U_pow  = U_last.^m;
+
+                % Matriks Partisi
+                T_U = array2table(U_last','VariableNames', arrayfun(@(x)sprintf('C%d',x),1:c,'UniformOutput',false));
+                T_Um = array2table(U_pow','VariableNames', arrayfun(@(x)sprintf('C%d',x),1:c,'UniformOutput',false));
+                writetable(T_U, fullfile(output_dir, sprintf('Matriks_Partisi_%dCluster.xlsx',c)));
+                writetable(T_Um, fullfile(output_dir, sprintf('Matriks_Partisi_Pangkat_%dCluster.xlsx',c)));
+
+                % Fungsi Objektif (Iterasi 1 & Terakhir)
+                iter1 = app.FullResults(idx).iteration_data{1};
+                iterLast = app.FullResults(idx).iteration_data{end};
+                
+                T_J1 = table((1:height(app.CleanData))','VariableNames',{'Data'});
+                for i = 1:c, T_J1.(sprintf('C%d',i)) = iter1.J_detail(i,:)'; end
+                T_J1.Total = iter1.J_total_per_data';
+
+                T_JL = table((1:height(app.CleanData))','VariableNames',{'Data'});
+                for i = 1:c, T_JL.(sprintf('C%d',i)) = iterLast.J_detail(i,:)'; end
+                T_JL.Total = iterLast.J_total_per_data';
+
+                filename_J = fullfile(output_dir, sprintf('Fungsi_Objektif_%dCluster.xlsx', c));
+                writetable(T_J1, filename_J, 'Sheet', 'Iterasi_1');
+                writetable(T_JL, filename_J, 'Sheet', 'Iterasi_Terakhir');
+
+                % Matriks Perubahan
+                T_DU1 = array2table(iter1.delta_U_matrix', 'VariableNames', arrayfun(@(x)sprintf('C%d',x),1:c,'UniformOutput',false));
+                T_DUL = array2table(iterLast.delta_U_matrix', 'VariableNames', arrayfun(@(x)sprintf('C%d',x),1:c,'UniformOutput',false));
+                filename_DU = fullfile(output_dir, sprintf('Matriks_Perubahan_Per_Data_%dCluster.xlsx', c));
+                writetable(T_DU1, filename_DU, 'Sheet', 'Iterasi_1');
+                writetable(T_DUL, filename_DU, 'Sheet', 'Iterasi_Terakhir');
+
+                % Hasil Akhir Clustering (Data + Label)
+                resTable = app.CleanData;
+                for i = 1:c, resTable.(sprintf('Membership_C%d', i)) = U_last(i, :)'; end
+                resTable.Cluster = app.FullResults(idx).labels;
+                writetable(resTable, fullfile(output_dir, sprintf('hasil_clustering_%d_cluster.xlsx', c)));
+            end
+        end
+
+        function ShowClusterResult(app, c_idx)
+            if isempty(app.ClusterLabels)
+                uialert(app.UIFigure, 'Proses clustering dulu!', 'Peringatan');
+                return;
+            end
+            tempTable = app.CleanData;
+            tempTable.Hasil_Cluster = app.ClusterLabels(:, c_idx);
+            app.DataTable.Data = tempTable;
+        end
+    end
+
+    methods (Access = private)
+        function createComponents(app)
+            app.UIFigure = uifigure('Name', 'FCM Balita', 'Position', [100 100 1000 650]);
+            app.LabelJudul = uilabel(app.UIFigure, 'Text', 'Status Gizi Balita (Fuzzy C-Means)', ...
+                'Position', [20 600 600 30], 'FontSize', 18, 'FontWeight', 'bold');
+            app.LoadButton = uibutton(app.UIFigure, 'push', 'Text', '1. Input File Excel', 'Position', [20 550 150 35], 'ButtonPushedFcn', @(btn, event) LoadButtonPushed(app, event));
+            app.ProcessButton = uibutton(app.UIFigure, 'push', 'Text', '2. Proses Clustering', 'Position', [180 550 150 35], 'BackgroundColor', [0.8 1 0.8], 'ButtonPushedFcn', @(btn, event) ProcessButtonPushed(app, event));
+            uilabel(app.UIFigure, 'Text', 'Lihat Hasil:', 'Position', [350 555 100 25], 'FontWeight', 'bold');
+            app.Btn2 = uibutton(app.UIFigure, 'push', 'Text', '2 Cluster', 'Position', [450 550 80 30], 'ButtonPushedFcn', @(btn, event) ShowClusterResult(app, 1));
+            app.Btn3 = uibutton(app.UIFigure, 'push', 'Text', '3 Cluster', 'Position', [540 550 80 30], 'ButtonPushedFcn', @(btn, event) ShowClusterResult(app, 2));
+            app.Btn4 = uibutton(app.UIFigure, 'push', 'Text', '4 Cluster', 'Position', [630 550 80 30], 'ButtonPushedFcn', @(btn, event) ShowClusterResult(app, 3));
+            app.DataTable = uitable(app.UIFigure, 'Position', [20 30 450 500]);
+            app.UIAxes_PCI = uiaxes(app.UIFigure, 'Position', [520 300 450 230]);
+            title(app.UIAxes_PCI, 'Partition Coefficient Index (PCI)');
+            app.UIAxes_SI = uiaxes(app.UIFigure, 'Position', [520 30 450 230]);
+            title(app.UIAxes_SI, 'Silhouette Index (SI)');
+        end
+    end
+
+    methods (Access = public)
+        function app = FCM_Balita_App
+            createComponents(app);
+        end
+    end
+end

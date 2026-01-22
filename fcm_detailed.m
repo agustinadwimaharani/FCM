@@ -1,6 +1,7 @@
 function [U, V, J_history, iteration_data] = fcm_detailed(X, c, m, max_iter, epsilon)
 % Fuzzy C-Means dengan output detail setiap iterasi
-% Menampilkan 10 data terakhir dari fungsi objektif per data dan Matriks Perubahan
+% Command Window: 10 data AWAL
+% Penyimpanan: SEMUA data disimpan di iteration_data
 
     if nargin < 3, m = 2; end
     if nargin < 4, max_iter = 100; end
@@ -9,9 +10,10 @@ function [U, V, J_history, iteration_data] = fcm_detailed(X, c, m, max_iter, eps
     [n, d] = size(X);
 
     fprintf('\nFuzzy C-Means - %d Cluster\n', c);
-    fprintf('Parameter: n=%d, d=%d, m=%.1f, max_iter=%d, epsilon=%.0e\n', n, d, m, max_iter, epsilon);
+    fprintf('Parameter: n=%d, d=%d, m=%.1f, max_iter=%d, epsilon=%.0e\n', ...
+            n, d, m, max_iter, epsilon);
 
-    % Inisialisasi U 
+    % Inisialisasi U
     U = rand(c, n);
     U = U ./ sum(U, 1);
 
@@ -21,28 +23,29 @@ function [U, V, J_history, iteration_data] = fcm_detailed(X, c, m, max_iter, eps
     for iter = 1:max_iter
         fprintf('\n--- Iterasi %d ---\n', iter);
 
-        % Hitung U^m
+        %% Hitung U^m
         Um = U .^ m;
 
-        % Hitung centroid 
+        %% Hitung centroid
         V = (Um * X) ./ sum(Um, 2);
 
         fprintf('\nCentroid:\n');
-        fprintf('%-10s %-12s %-12s %-12s %-12s\n', 'Cluster', 'JK', 'Usia', 'Berat', 'Tinggi');
+        fprintf('%-10s %-12s %-12s %-12s %-12s\n', ...
+                'Cluster', 'JK', 'Usia', 'Berat', 'Tinggi');
         for i = 1:c
             fprintf('%-10d %-12.6f %-12.6f %-12.6f %-12.6f\n', ...
-                    i, V(i, 1), V(i, 2), V(i, 3), V(i, 4));
+                    i, V(i,1), V(i,2), V(i,3), V(i,4));
         end
 
-        %% HITUNG FUNGSI OBJEKTIF DETAIL PER DATA
-        dist2 = zeros(c, n);        % jarak kuadrat
-        J_detail = zeros(c, n);     % kontribusi cluster → setiap data
+        %% FUNGSI OBJEKTIF 
+        dist2 = zeros(c, n);
+        J_detail = zeros(c, n);
         J_total_per_data = zeros(1, n);
 
         for i = 1:c
             for j = 1:n
-                dist2(i,j) = norm(X(j,:) - V(i,:))^2;      % ||x_j - v_i||^2
-                J_detail(i,j) = Um(i,j) * dist2(i,j);      % U_ij^m * dist^2
+                dist2(i,j) = norm(X(j,:) - V(i,:))^2;
+                J_detail(i,j) = Um(i,j) * dist2(i,j);
             end
         end
 
@@ -52,21 +55,19 @@ function [U, V, J_history, iteration_data] = fcm_detailed(X, c, m, max_iter, eps
 
         fprintf('\nFungsi Objektif (J): %.6f\n', J);
 
-        % Total per data
         for j = 1:n
             J_total_per_data(j) = sum(J_detail(:,j));
         end
 
-        %% CETAK 10 DATA TERAKHIR FUNGSI OBJEKTIF
-        start_idx = max(n-9, 1);  % mulai dari n-9 atau 1 kalau data < 10
-        fprintf('\nFungsi Objektif Detail per Data (10 data terakhir):\n');
+        %% TAMPILKAN 10 DATA AWAL
+        fprintf('\nFungsi Objektif Detail per Data (10 data awal):\n');
         fprintf('%-8s', 'Data');
         for i = 1:c
             fprintf('%-12s', sprintf('C%d', i));
         end
         fprintf('%-12s\n', 'Total');
 
-        for j = start_idx:n
+        for j = 1:min(10,n)
             fprintf('%-8d', j);
             for i = 1:c
                 fprintf('%-12.6f', J_detail(i,j));
@@ -74,9 +75,10 @@ function [U, V, J_history, iteration_data] = fcm_detailed(X, c, m, max_iter, eps
             fprintf('%-12.6f\n', J_total_per_data(j));
         end
 
-        %% UPDATE U
+        %%  UPDATE U 
         U_old = U;
         D = zeros(c, n);
+
         for i = 1:c
             for j = 1:n
                 D(i,j) = norm(X(j,:) - V(i,:));
@@ -94,22 +96,20 @@ function [U, V, J_history, iteration_data] = fcm_detailed(X, c, m, max_iter, eps
             end
         end
 
-        % Hitung perubahan U
+        %% DELTA U 
         delta_U = norm(U - U_old);
         fprintf('Delta U (norm total): %.6e\n', delta_U);
 
-        % Matriks Perubahan per data (delta per elemen)
-        delta_U_matrix = abs(U - U_old);  % ukuran c x n
+        delta_U_matrix = abs(U - U_old);
 
-        % Tampilkan 10 data terakhir Matriks Perubahan
-        fprintf('\nMatriks Perubahan per Data (10 data terakhir):\n');
+        fprintf('\nMatriks Perubahan per Data (10 data awal):\n');
         fprintf('%-8s', 'Data');
         for i = 1:c
             fprintf('%-12s', sprintf('C%d', i));
         end
         fprintf('\n');
 
-        for j = max(1,n-9):n
+        for j = 1:min(10,n)
             fprintf('%-8d', j);
             for i = 1:c
                 fprintf('%-12.6f', delta_U_matrix(i,j));
@@ -117,16 +117,16 @@ function [U, V, J_history, iteration_data] = fcm_detailed(X, c, m, max_iter, eps
             fprintf('\n');
         end
 
-        % Simpan data per iterasi
-        iteration_data{iter}.J_detail = J_detail;
-        iteration_data{iter}.J_total_per_data = J_total_per_data;
+        %% SIMPAN DETAIL ITERASI 
+        iteration_data{iter}.J_detail = J_detail;                 % SEMUA DATA
+        iteration_data{iter}.J_total_per_data = J_total_per_data; % SEMUA DATA
         iteration_data{iter}.V = V;
         iteration_data{iter}.U = U;
         iteration_data{iter}.J = J;
         iteration_data{iter}.delta_U_matrix = delta_U_matrix;
         iteration_data{iter}.delta_U = delta_U;
 
-        % Cek konvergensi
+        %% CEK KONVERGENSI 
         if delta_U < epsilon
             fprintf('\nKonvergensi pada iterasi %d\n', iter);
             J_history = J_history(1:iter);
@@ -135,11 +135,11 @@ function [U, V, J_history, iteration_data] = fcm_detailed(X, c, m, max_iter, eps
         end
     end
 
-    %% Hasil Akhir
+    %% HASIL AKHIR
     fprintf('\nHasil Akhir:\n');
     fprintf('Fungsi Objektif final: %.6f\n', J_history(end));
-    [~, cluster_labels] = max(U, [], 1);
 
+    [~, cluster_labels] = max(U, [], 1);
     fprintf('\nDistribusi Cluster:\n');
     for i = 1:c
         fprintf('Cluster %d: %d data\n', i, sum(cluster_labels == i));

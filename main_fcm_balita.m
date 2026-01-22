@@ -3,91 +3,160 @@
 % Evaluasi 3 skenario: 2, 3, dan 4 cluster
 
 clear; clc; close all;
-
 fprintf('\nCLUSTERING STATUS GIZI BALITA - FUZZY C-MEANS\n\n');
 
-%% Load Data
+%% LOAD DATA
 fprintf('Load Dataset\n');
 data_path = 'DataBalita.xlsx';
 fprintf('Membaca file: %s\n', data_path);
 
-try
-    data = readtable(data_path, 'Sheet', 1);
+data = readtable(data_path,'Sheet',1);
+data.Properties.VariableNames(1:6) = ...
+    {'No','Nama','JK','Usia_Bulan','Berat','Tinggi'};
+data = rmmissing(data);
 
-    if width(data) >= 6
-        data.Properties.VariableNames(1:6) = {'No', 'Nama', 'JK', 'Usia_Bulan', 'Berat', 'Tinggi'};
-    end
+fprintf('Data berhasil dimuat: %d balita\n\n', height(data));
 
-    data = rmmissing(data);
-
-    fprintf('Data berhasil dimuat: %d balita\n', height(data));
-    fprintf('Kolom: JK, Usia_Bulan, Berat, Tinggi\n\n');
-
-catch ME
-    fprintf('ERROR: Gagal membaca file\n');
-    fprintf('%s\n', ME.message);
-    return;
-end
-
-%% Preprocessing
+%% PREPROCESSING 
 [X_normalized, X_encoded, params] = preprocess_data(data);
 
-%% Fuzzy C-Means untuk 3 Skenario
-cluster_scenarios = [2, 3, 4];
+%% FUZZY C-MEANS
+cluster_scenarios = [2 3 4];
 results = struct();
 
 for idx = 1:length(cluster_scenarios)
     c = cluster_scenarios(idx);
 
-    fprintf('\n\n--- SKENARIO %d: %d CLUSTER ---\n', idx, c);
-
-    [U, V, J_history, iteration_data] = fcm_detailed(X_normalized, c, 2, 100, 1e-5);
+    fprintf('\n--- SKENARIO %d CLUSTER ---\n', c);
+    [U,V,J_history,iteration_data] = ...
+        fcm_detailed(X_normalized,c,2,100,1e-5);
 
     results(idx).c = c;
     results(idx).U = U;
     results(idx).V = V;
     results(idx).J_history = J_history;
     results(idx).iteration_data = iteration_data;
-    [~, cluster_labels] = max(U, [], 1);
-    results(idx).cluster_labels = cluster_labels';
+
+    [~,lbl] = max(U,[],1);
+    results(idx).cluster_labels = lbl';
     results(idx).pci = calculate_pci(U);
-    results(idx).si = calculate_silhouette_index(X_normalized, U);
-
+    results(idx).si  = calculate_silhouette_index(X_normalized,U);
 end
 
-%% Perbandingan PCI
-fprintf('\n\nEVALUASI PERBANDINGAN PCI\n');
-fprintf('%-15s %-15s %-20s\n', 'Jumlah Cluster', 'PCI', 'Keterangan');
-fprintf('%s\n', repmat('-', 1, 55));
-
+%% EVALUASI PCI 
 pci_values = [results.pci];
-for idx = 1:length(cluster_scenarios)
-    fprintf('%-15d %-15.6f', results(idx).c, results(idx).pci);
-    if results(idx).pci == max(pci_values)
-        fprintf(' %-20s\n', '<-- TERBAIK');
-    else
-        fprintf('\n');
-    end
+[best_pci,best_idx] = max(pci_values);
+
+fprintf('\nEVALUASI PCI\n');
+for i=1:length(results)
+    fprintf('%d Cluster : %.6f\n',results(i).c,results(i).pci);
+end
+% fprintf('Cluster Optimal: %d (PCI %.6f)\n\n',results(best_idx).c,best_pci);
+
+%% EVALUASI SI 
+si_values = [results.si];
+
+fprintf('EVALUASI SI\n');
+for i=1:length(results)
+    fprintf('%d Cluster : %.6f\n',results(i).c,results(i).si);
 end
 
-[max_pci, best_idx] = max(pci_values);
-fprintf('\nKESIMPULAN:\n');
-fprintf('Jumlah cluster optimal: %d cluster\n', results(best_idx).c);
-fprintf('Nilai PCI tertinggi: %.6f\n\n', max_pci);
 
-%% Perbandingan SI
-fprintf('\n\nEVALUASI PERBANDINGAN SILHOUETTE INDEX (SI)\n');
-fprintf('%-15s %-15s %-20s\n', 'Jumlah Cluster', 'SI', 'Keterangan');
-fprintf('%s\n', repmat('-', 1, 55));
+%% SIMPAN HASIL 
+output_dir = 'output';
+if ~exist(output_dir,'dir'), mkdir(output_dir); end
 
-si_values = [results.si];
-for idx = 1:length(cluster_scenarios)
-    fprintf('%-15d %-15.6f', results(idx).c, results(idx).si);
-    if results(idx).si == max(si_values)
-        fprintf(' %-20s\n', '<-- TERBAIK');
-    else
-        fprintf('\n');
+%% SIMPAN MATRIKS PARTISI 
+m = 2;
+for idx = 1:length(results)
+    c = results(idx).c;
+
+    U_last = results(idx).iteration_data{end}.U;
+    U_last = U_last ./ sum(U_last,1);
+    U_pow  = U_last.^m;
+
+    T_U = array2table(U_last','VariableNames', ...
+        arrayfun(@(x)sprintf('C%d',x),1:c,'UniformOutput',false));
+    T_Um = array2table(U_pow','VariableNames', ...
+        arrayfun(@(x)sprintf('C%d',x),1:c,'UniformOutput',false));
+
+    writetable(T_U, fullfile(output_dir,...
+        sprintf('Matriks_Partisi_%dCluster.xlsx',c)));
+    writetable(T_Um, fullfile(output_dir,...
+        sprintf('Matriks_Partisi_Pangkat_%dCluster.xlsx',c)));
+end
+
+
+%% SIMPAN FUNGSI OBJEKTIF (ITERASI 1 & ITERASI TERAKHIR PER SKENARIO)
+
+for idx = 1:length(results)
+    c = results(idx).c;
+
+    iter1 = results(idx).iteration_data{1};
+    iterLast = results(idx).iteration_data{end};
+
+    % ===== ITERASI 1 =====
+    J_detail_1 = iter1.J_detail;
+    J_total_1  = iter1.J_total_per_data;
+    n = size(J_detail_1,2);
+
+    T_J1 = table((1:n)','VariableNames',{'Data'});
+    for i = 1:c
+        T_J1.(sprintf('C%d',i)) = J_detail_1(i,:)';
     end
+    T_J1.Total = J_total_1';
+
+    % ===== ITERASI TERAKHIR =====
+    J_detail_L = iterLast.J_detail;
+    J_total_L  = iterLast.J_total_per_data;
+
+    T_JL = table((1:n)','VariableNames',{'Data'});
+    for i = 1:c
+        T_JL.(sprintf('C%d',i)) = J_detail_L(i,:)';
+    end
+    T_JL.Total = J_total_L';
+
+    % ===== SIMPAN DALAM 1 FILE, 2 SHEET =====
+    filename = fullfile(output_dir, ...
+        sprintf('Fungsi_Objektif_%dCluster.xlsx', c));
+
+    writetable(T_J1, filename, 'Sheet', 'Iterasi_1');
+    writetable(T_JL, filename, 'Sheet', 'Iterasi_Terakhir');
+
+    fprintf('Saved: Fungsi_Objektif_%dCluster.xlsx (Iterasi 1 & Terakhir)\n', c);
+end
+
+%% SIMPAN MATRIKS PERUBAHAN PER DATA (ITERASI 1 & ITERASI TERAKHIR)
+
+for idx = 1:length(results)
+    c = results(idx).c;
+
+    iter1    = results(idx).iteration_data{1};
+    iterLast = results(idx).iteration_data{end};
+
+    % === Ambil Matriks Perubahan per Data ===
+    DeltaU_1 = iter1.delta_U_matrix;    % c x n
+    DeltaU_L = iterLast.delta_U_matrix; % c x n
+
+    % === Transpose agar per baris = data (lebih rapi di Excel) ===
+    DeltaU_1 = DeltaU_1';
+    DeltaU_L = DeltaU_L';
+
+    % === Konversi ke tabel ===
+    T_DU1 = array2table(DeltaU_1, ...
+        'VariableNames', arrayfun(@(x)sprintf('C%d',x),1:c,'UniformOutput',false));
+
+    T_DUL = array2table(DeltaU_L, ...
+        'VariableNames', arrayfun(@(x)sprintf('C%d',x),1:c,'UniformOutput',false));
+
+    % === Simpan ke Excel (1 file, 2 sheet) ===
+    filename = fullfile(output_dir, ...
+        sprintf('Matriks_Perubahan_Per_Data_%dCluster.xlsx', c));
+
+    writetable(T_DU1, filename, 'Sheet', 'Iterasi_1');
+    writetable(T_DUL, filename, 'Sheet', 'Iterasi_Terakhir');
+
+    fprintf('Saved: Matriks_Perubahan_Per_Data_%dCluster.xlsx\n', c);
 end
 
 
@@ -183,7 +252,46 @@ for i = 1:length(cluster_scenarios)
 end
 hold off;
 
-fprintf('Visualisasi selesai\n\n');
+
+%% Plot Perbandingan SI
+figure('Name', 'Perbandingan Silhouette Index', ...
+       'Position', [250, 250, 800, 500]);
+
+bar(cluster_scenarios, si_values, ...
+    'FaceColor', [0.4 0.8 0.4], ...
+    'EdgeColor', 'k', ...
+    'LineWidth', 1.5);
+hold on;
+
+plot(cluster_scenarios, si_values, 'o-', ...
+     'LineWidth', 2, ...
+     'MarkerSize', 10, ...
+     'MarkerFaceColor', 'g');
+
+xlabel('Jumlah Cluster', 'FontWeight', 'bold', 'FontSize', 12);
+ylabel('Silhouette Index (SI)', 'FontWeight', 'bold', 'FontSize', 12);
+title('Perbandingan Silhouette Index untuk Berbagai Jumlah Cluster', ...
+      'FontWeight', 'bold', 'FontSize', 14);
+
+xticks(cluster_scenarios);
+grid on;
+
+ylim([min(si_values)*0.95, max(si_values)*1.05]);
+
+for i = 1:length(cluster_scenarios)
+    text(cluster_scenarios(i), si_values(i) + 0.005, ...
+         sprintf('%.4f', si_values(i)), ...
+         'HorizontalAlignment', 'center', ...
+         'FontWeight', 'bold', ...
+         'FontSize', 11);
+end
+hold off;
+
+[best_si, best_si_idx] = max(si_values);
+
+fprintf('\nCluster Optimal Berdasarkan SI : %d (SI %.6f)\n', ...
+    results(best_si_idx).c, best_si);
+
 
 %% Simpan Hasil
 fprintf('Menyimpan Hasil ke Folder Output\n');
@@ -238,101 +346,17 @@ fprintf('  Saved: perbandingan_pci.xlsx\n');
 
 
 
-% Plot Perbandingan SI
-figure('Name', 'Perbandingan SI', 'Position', [250, 250, 800, 500]);
-bar(cluster_scenarios, si_values, 'FaceColor', [0.1 0.7 0.4], ...
-    'EdgeColor', 'k', 'LineWidth', 1.5);
-hold on;
-plot(cluster_scenarios, si_values, 'ko-', 'LineWidth', 2, ...
-    'MarkerSize', 10, 'MarkerFaceColor', 'y');
-xlabel('Jumlah Cluster', 'FontWeight', 'bold', 'FontSize', 12);
-ylabel('Silhouette Index (SI)', 'FontWeight', 'bold', 'FontSize', 12);
-title('Perbandingan Silhouette Index (SI)', 'FontWeight', 'bold', 'FontSize', 14);
-xticks(cluster_scenarios);
-grid on;
-ylim([min(si_values)*0.95, max(si_values)*1.05]);
-
-for i = 1:length(cluster_scenarios)
-    text(cluster_scenarios(i), si_values(i) + 0.005, ...
-         sprintf('%.4f', si_values(i)), ...
-         'HorizontalAlignment', 'center', 'FontWeight', 'bold', 'FontSize', 11);
-end
-hold off;
-
-
-% Simpan SI
-si_table = table(cluster_scenarios', si_values', ...
-                 'VariableNames', {'Jumlah_Cluster', 'Silhouette_Index'});
-writetable(si_table, fullfile(output_dir, 'perbandingan_si.xlsx'));
-fprintf('  Saved: perbandingan_si.xlsx\n');
-
-
 % Simpan workspace
 save(fullfile(output_dir, 'workspace_fcm.mat'));
 fprintf('  Saved: workspace_fcm.mat\n');
 
 
-%% Menampilkan & Menyimpan Matriks Partisi + Pemangkatan U
-
-% output_dir = 'output';
-% if ~exist(output_dir, 'dir')
-%     mkdir(output_dir);
-% end
-
-% m = 2; % fuzziness, sesuaikan dengan yang dipakai di fcm_detailed
-
-% for idx_skenario = 1:length(results)
-%     c = results(idx_skenario).c;  % jumlah cluster
-
-    % Ambil Matriks Partisi iterasi terakhir
-%     U_last = results(idx_skenario).iteration_data{end}.U;
-
-    % Normalisasi U agar jumlah per data = 1
-%    U_last = U_last ./ sum(U_last,1);
-
-    % Pemangkatan U
-%    U_pow = U_last.^m;
-
-    % Buat tabel untuk U
-%    cluster_names = arrayfun(@(x) sprintf('C%d', x), 1:c, 'UniformOutput', false);
-%    T_U = array2table(U_last', 'VariableNames', cluster_names);
-
-    % Buat tabel untuk U^m
-%    T_U_pow = array2table(U_pow', 'VariableNames', cluster_names);
-
-    % Tampilkan Matriks Partisi
-%    fprintf('\n=== Matriks Partisi - %d Cluster ===\n', c);
-%    disp(T_U);
-
-    % Tampilkan Matriks Partisi pangkat m
-%    fprintf('\n=== Pemangkatan Nilai Matriks Partisi (U^%.1f) - %d Cluster ===\n', m, c);
-%   disp(T_U_pow);
-
-    % Simpan ke Excel
-%    filename_U = fullfile(output_dir, sprintf('Matriks_Partisi_%dCluster.xlsx', c));
-%    writetable(T_U, filename_U);
-
-%    filename_U_pow = fullfile(output_dir, sprintf('Matriks_Partisi_Pangkat_%dCluster.xlsx', c));
-%   writetable(T_U_pow, filename_U_pow);
-
-    fprintf('Matriks Partisi dan U^%.1f untuk %d cluster tersimpan di folder: %s\n', m, c, output_dir);
-%end
-
-
-
 
 fprintf('\nSELESAI! Semua hasil disimpan di folder: %s\n\n', output_dir);
 
-
-
-%% Ringkasan
-fprintf('RINGKASAN HASIL\n');
-fprintf('Dataset: %s (%d balita)\n', data_path, height(data));
-fprintf('Fitur: JK, Usia, Berat, Tinggi\n');
-fprintf('Metode: Fuzzy C-Means (m=2, epsilon=1e-5)\n\n');
-fprintf('Skenario yang diuji:\n');
-for idx = 1:length(cluster_scenarios)
-    fprintf('  %d cluster - PCI: %.6f - Iterasi: %d\n', ...
-            results(idx).c, results(idx).pci, length(results(idx).J_history));
-end
-fprintf('\nKLUSTER OPTIMAL: %d cluster (PCI = %.6f)\n', results(best_idx).c, max_pci);
+%% RINGKASAN 
+fprintf('\nRINGKASAN HASIL\n');
+fprintf('Dataset : %d Balita\n',height(data));
+fprintf('Metode  : Fuzzy C-Means\n');
+fprintf('Cluster Optimal : %d (PCI %.6f)\n',...
+    results(best_idx).c,best_pci);
